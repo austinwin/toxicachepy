@@ -1,73 +1,149 @@
 # toxicachepy
 
-**Python port** of the popular [toxicache](https://github.com/xhzeem/toxicache) Golang scanner.
+**toxicachepy** is a Python-based, cache-aware **header reflection scanner** inspired by the original Golang tool [toxicache](https://github.com/xhzeem/toxicache).
 
-`toxicachepy` detects potential **web cache poisoning** vulnerabilities by injecting common headers often mistakenly trusted by caches (CDNs, reverse proxies, etc.) and checking if the injected input is reflected in the response.
+It identifies potential **web cache poisoning candidates** by injecting a fixed set of HTTP headers and reporting reflections **only when cache-related response headers are present**.
 
-The tool focuses on sites that expose cache-related headers (e.g., `CF-Cache-Status`, `X-Cache`, etc.) and only reports reflections when such headers are present—significantly reducing false positives.
+This tool does **not** confirm exploitability. It is designed to reduce noise during large-scale reconnaissance by filtering out reflections that do not appear to pass through a caching layer.
 
-> **Note:** Original concept and header list by [@xhzeem](https://github.com/xhzeem). This Python port is maintained informally.
+> Original concept by @xhzeem  
+> Python implementation maintained informally
 
-## Features
+---
 
-* **Extensive Vectors:** Tests **25+ known header injection vectors** (e.g., `X-Forwarded-Host`, `X-Rewrite-Url`) commonly abused in cache poisoning attacks.
-* **Cache Busting:** Automatically appends a random `toxicache=<random>` query parameter to every request to bypass cache normalization and ensure fresh responses.
-* **Smart Detection:** Only reports reflections if the server response also contains known caching headers (e.g., `X-Cache`, `Server-Timing`, `Akamai-Cache-Status`).
-* **High Performance:** Concurrent scanning with configurable threads (Default: CPU cores × 5).
-* **Flexible Input:** Supports reading URLs from a file or via standard input (stdin/piping).
-* **Detailed Output:** Colored terminal output and automatic saving to timestamped text files.
+## What This Tool Actually Does
+
+- Injects **26 predefined HTTP header probes**
+- Appends a random `toxicache=<int>` query parameter to each request
+- Sends requests with redirects disabled
+- Checks whether injected values are reflected in:
+  - Response headers
+  - Response body
+- Reports reflections **only if at least one cache-related response header exists**
+
+---
 
 ## Installation
 
-1.  **Clone the repository** (or download the script):
-    ```bash
-    git clone [https://github.com/your-username/toxicachepy.git](https://github.com/your-username/toxicachepy.git)
-    cd toxicachepy
-    ```
+```bash
+git clone https://github.com/austinwin/toxicachepy.git
+cd toxicachepy
+pip install requests
+```
 
-2.  **Install dependencies**:
-    The tool relies on `requests` to handle HTTP connections.
-    ```bash
-    pip install requests
-    ```
+---
 
 ## Usage
 
-### Basic Usage
-To scan a list of URLs from a file:
+### Basic Scan
+
 ```bash
 python toxicache.py -i urls.txt
 ```
 
-### Piping Input (Stdin)
-You can pipe URLs directly from other tools (like `waybackurls`, `subfinder`, or `cat`):
+### Piped Input (stdin)
+
 ```bash
 cat urls.txt | python toxicache.py
 ```
-### Customizing Output & Performance
-Specify a custom output file and increase the number of threads:
+
+### Custom Output and Threads
+
 ```bash
-python toxicache.py -i urls.txt -o my_scan_results.txt -t 50
+python toxicache.py -i urls.txt -o results.txt -t 50
 ```
-How It Works  
-Parsing: The script reads URLs from the provided input.  
 
-Injection: For every URL, it iterates through a list of ~25 headers known to cause poisoning.  
+---
 
-Cache Busting: A unique query parameter (?toxicache=1234) is added to the URL to force the cache to treat it as a new resource.  
+## Options
 
-Verification:
+| Flag | Long Flag     | Description                  | Default |
+|-----:|---------------|------------------------------|---------|
+| -i   | --input       | Input file containing URLs   | None |
+| -o   | --output      | Output file path             | toxicache-YYYY-MM-DD_HH-MM-SS.txt |
+| -t   | --threads     | Number of concurrent threads | CPU count × 5 |
+| -ua  | --user-agent  | Custom User-Agent string     | Chrome/111.0.0.0 |
 
-The script checks if the response contains specific Cache Headers (like X-Cache or CF-Cache-Status). If no cache headers are found, the result is ignored to avoid false positives on non-cached pages.  
+---
 
-If cache headers are present, it checks if the injected payload (xhzeem.me) is reflected in the response headers or body.
+## Example Output
 
-Reporting: Successful reflections are printed to the console and saved to the output file.
+Console output:
 
-Legal Disclaimer
-This tool is created for educational purposes and authorized security testing only. Do not use this tool on systems or domains you do not own or do not have explicit permission to test. The authors are not responsible for any misuse or damage caused by this tool.
+```text
+Headers reflected: X-Forwarded-Host: xhzeem.me
+https://example.com
+```
 
-# Clone or download the script
-git clone https://github.com/austinwin/toxicachepy.git  # (or just download the .py file)
-cd toxicachepy
+File output:
 
+```text
+Headers reflected: X-Forwarded-Host: xhzeem.me @ https://example.com
+```
+
+Each entry represents a **header reflection that occurred in the presence of cache-related response headers**.
+
+---
+
+## Cache Awareness
+
+A result is only reported if the response contains at least one of the following (non-exhaustive):
+
+- `X-Cache`
+- `CF-Cache-Status`
+- `Server-Timing`
+- `Akamai-Cache-Status`
+- `X-Varnish`
+- `X-Cache-Hits`
+
+These headers are **not printed**, only checked internally.
+
+---
+
+## What This Tool Does NOT Do
+
+- Does not confirm cache poisoning
+- Does not verify shared cache impact
+- Does not manipulate cache keys
+- Does not retry requests to validate poisoning
+- Does not replace manual testing
+
+All findings **require manual verification**.
+
+---
+
+## Burp Suite Comparison
+
+| Capability | toxicachepy | Burp Suite |
+|-----------|-------------|------------|
+| Header reflection automation | Yes | Manual |
+| Cache-aware filtering | Yes | No |
+| Large URL list scanning | Yes | Poor |
+| Exploit confirmation | No | Yes |
+| Proxy / GUI | No | Yes |
+
+**Use toxicachepy** to find candidates.  
+**Use Burp** to prove impact.
+
+---
+
+## Legal Disclaimer
+
+This tool is intended for **authorized security testing only**.
+
+Do not scan systems you do not own or have explicit permission to test.
+
+The authors assume **no responsibility** for misuse or damage.
+
+---
+
+## Credits
+
+- Research & original concept: @xhzeem
+- Python port: community-maintained
+
+---
+
+## License
+
+Provided as-is, without warranty of any kind.

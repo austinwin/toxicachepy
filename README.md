@@ -8,6 +8,9 @@ This tool does **not** confirm exploitability. It is designed to reduce noise du
 
 > Original concept by @xhzeem  
 > Python implementation maintained informally
+
+  
+python toxicache.py -i urls.txt
 <img width="490" height="169" alt="image" src="https://github.com/user-attachments/assets/89f8b177-05c6-41c4-87f3-b9531bfbea1a" />
 
 ---

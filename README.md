@@ -24,7 +24,7 @@ Python port maintained informally (feel free to contribute!).
 ```bash
 # Clone or download the script
 git clone https://github.com/austinwin/toxicachepy.git  # (or just download the .py file)
-cd toxicache-py
+cd toxicachepy
 
 # Install the only dependency
 pip install requests

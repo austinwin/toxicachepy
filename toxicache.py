@@ -1,15 +1,19 @@
 import argparse
 import concurrent.futures
 import datetime as dt
+import json
 import os
 import random
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 
@@ -53,10 +57,20 @@ _____  ___  __     _   ___    __    ___   _     ____
 
 _tls = threading.local()
 
-def get_session(insecure: bool) -> requests.Session:
+def get_session(insecure: bool, retries: int = 3) -> requests.Session:
     s = getattr(_tls, "session", None)
     if s is None:
         s = requests.Session()
+        # Retry on 429/503 for stability
+        retry_strategy = Retry(
+            total=retries,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
         _tls.session = s
     # If insecure is true, suppress warnings once globally
     if insecure:
@@ -70,6 +84,16 @@ def get_session(insecure: bool) -> requests.Session:
 
 def colorize(text: str, color_code: str) -> str:
     return f"\033[38;5;{color_code}m{text}\033[0m"
+
+
+def color_status(code: int) -> str:
+    if 200 <= code < 300:
+        return colorize(str(code), "46")  # Green
+    if 300 <= code < 400:
+        return colorize(str(code), "226")  # Yellow
+    if 400 <= code < 500:
+        return colorize(str(code), "196")  # Red
+    return colorize(str(code), "255")  # White
 
 
 def print_banner() -> None:
@@ -159,10 +183,11 @@ def check_reflection(
     insecure: bool,
     follow_redirects: bool,
     token: str,
-) -> Tuple[bool, List[str], str]:
+    proxies: Optional[Dict[str, str]] = None,
+) -> Tuple[bool, List[str], str, int, str]:
     """
     Returns:
-      (reflected, cache_header_hits, modified_url)
+      (reflected, cache_header_hits, modified_url, status_code, source_type)
     """
     modified_url = inject_toxic_param(url, token)
 
@@ -179,27 +204,28 @@ def check_reflection(
             verify=not insecure,
             allow_redirects=follow_redirects,
             timeout=timeout,
+            proxies=proxies,
         )
     except requests.RequestException:
-        return (False, [], modified_url)
+        return (False, [], modified_url, 0, "Error")
 
     cache_hits = detect_cache_headers(resp)
     if not cache_hits:
-        return (False, [], modified_url)
+        return (False, [], modified_url, resp.status_code, "NoCache")
 
     # Check response headers values
-    for v in resp.headers.values():
+    for k, v in resp.headers.items():
         if probe.check in str(v):
-            return (True, cache_hits, modified_url)
+            return (True, cache_hits, modified_url, resp.status_code, f"Header({k})")
 
     # Check response body
     try:
         if probe.check in (resp.text or ""):
-            return (True, cache_hits, modified_url)
+            return (True, cache_hits, modified_url, resp.status_code, "Body")
     except Exception:
         pass
 
-    return (False, cache_hits, modified_url)
+    return (False, cache_hits, modified_url, resp.status_code, "None")
 
 
 def process_one(
@@ -208,9 +234,11 @@ def process_one(
     args,
     token: str,
     output_lock: threading.Lock,
-    reflect_counter: "ReflectCounter",
+    stats: "Stats",
 ) -> None:
-    reflected, cache_hits, _ = check_reflection(
+    proxies = {"http": args.proxy, "https": args.proxy} if args.proxy else None
+
+    reflected, cache_hits, _, status_code, source = check_reflection(
         url=url,
         probe=probe,
         user_agent=args.user_agent,
@@ -218,42 +246,86 @@ def process_one(
         insecure=args.insecure,
         follow_redirects=args.follow_redirects,
         token=token,
+        proxies=proxies,
     )
+
+    stats.update(reflected=reflected, error=(status_code == 0))
 
     if not reflected:
         return
 
     with output_lock:
-        reflect_counter.inc()
+        # Clear status line to print result nicely
+        stats.clear_line()
 
         hdrs = format_headers(probe.headers)
-        print("\n" + colorize("Headers reflected:", "11") + f" [{hdrs}]")
 
-        if args.show_cache_headers:
-            print(colorize("Cache headers:", "80") + f" {', '.join(cache_hits)}")
+        print(f"{colorize('[+]', '46')} Reflection found at {colorize(url, '14')}")
+        print(f"    ├─ Payload: {colorize(hdrs, '226')}")
+        print(f"    ├─ Source:  {colorize(source, '208')}")
+        print(f"    ├─ Status:  {color_status(status_code)}")
 
-        print(url + "\n")
+        cache_str = (
+            ", ".join(cache_hits)
+            if args.show_cache_headers
+            else f"Detected ({len(cache_hits)})"
+        )
+        print(f"    └─ Cache:   {colorize(cache_str, '80')}")
+        print("")  # Separator
 
         with open(args.output, "a", encoding="utf-8") as f:
-            # Keep file format consistent but optionally include cache hits
-            if args.show_cache_headers:
-                f.write(f"Headers reflected: {hdrs} @ {url} | Cache: {', '.join(cache_hits)}\n")
+            if args.json:
+                entry = {
+                    "url": url,
+                    "payload_headers": probe.headers,
+                    "source": source,
+                    "status": status_code,
+                    "cache_headers": cache_hits,
+                    "timestamp": now_timestamp()
+                }
+                f.write(json.dumps(entry) + "\n")
             else:
-                f.write(f"Headers reflected: {hdrs} @ {url}\n")
+                base_log = f"Reflected: {hdrs} | Loc: {source} | Status: {status_code}"
+                if args.show_cache_headers:
+                    f.write(f"{base_log} | Cache: {', '.join(cache_hits)} @ {url}\n")
+                else:
+                    f.write(f"{base_log} @ {url}\n")
 
 
-class ReflectCounter:
-    def __init__(self) -> None:
-        self._n = 0
+class Stats:
+    def __init__(self, total: int = 0) -> None:
+        self.total_ops = total
+        self.scanned = 0
+        self.reflected = 0
+        self.errors = 0
         self._lock = threading.Lock()
 
-    def inc(self) -> None:
+    def update(self, reflected: bool, error: bool) -> None:
         with self._lock:
-            self._n += 1
+            self.scanned += 1
+            if reflected:
+                self.reflected += 1
+            if error:
+                self.errors += 1
 
-    def value(self) -> int:
-        with self._lock:
-            return self._n
+            pct = (self.scanned / self.total_ops * 100) if self.total_ops > 0 else 0.0
+            found_color = "46" if self.reflected > 0 else "255"
+            
+            # \r to return to start, \033[K to clear rest of line
+            msg = (
+                f"\r[ {pct:5.1f}% | Scanned: {self.scanned}/{self.total_ops} | "
+                f"Found: {colorize(str(self.reflected), found_color)} | "
+                f"Err: {self.errors} ] "
+            )
+            sys.stderr.write(msg)
+            sys.stderr.flush()
+
+    def clear_line(self) -> None:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+    def final_stats(self) -> int:
+        return self.reflected
 
 
 def iter_tasks(urls: List[str], probes: List[Probe]) -> Iterable[Tuple[str, Probe]]:
@@ -333,13 +405,16 @@ def main() -> None:
         default="Mozilla/5.0 (Macintosh; Intel Mac OS X 12_2_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
         help="User-Agent header value",
     )
-    parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=10, help="Request timeout in seconds")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS verification (like curl -k)")
     parser.add_argument("--follow-redirects", action="store_true", help="Follow redirects (default: off)")
     parser.add_argument("--show-cache-headers", action="store_true", help="Print/log detected cache headers")
     parser.add_argument("--max-inflight", type=int, default=0,
                         help="Max queued futures (0 = auto: threads*20). Helps avoid RAM blowups.")
     parser.add_argument("--payload", type=str, default="xhzeem.me", help="Payload value used for probes")
+    parser.add_argument("--proxy", type=str, default="", help="Proxy URL (e.g. http://127.0.0.1:8080)")
+    parser.add_argument("--json", action="store_true", help="Output results in JSONL format")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose mode (controls error visibility, etc.)")
 
     args = parser.parse_args()
 
@@ -348,9 +423,6 @@ def main() -> None:
 
     # Stable token per run makes debugging and validation cleaner than random per request.
     token = str(random.randint(0, 9999))
-
-    print(f"▶ Output will be saved to: {colorize(args.output, '80')}")
-    print(f"▶ toxicache token: {colorize(token, '80')}\n")
 
     try:
         urls = read_urls_from_input(args.input)
@@ -365,17 +437,26 @@ def main() -> None:
     print_banner()
 
     probes = build_probes(args.payload)
+    total_ops = len(urls) * len(probes)
 
     output_lock = threading.Lock()
-    reflect_counter = ReflectCounter()
+    stats = Stats(total=total_ops)
+
+    print(f"▶ Loaded {len(urls)} URLs with {len(probes)} probes each. Total operations: {total_ops}")
+    print(f"▶ Output will be saved to: {colorize(args.output, '80')}")
+    print(f"▶ toxicache token: {colorize(token, '80')}")
+    if args.proxy:
+        print(f"▶ Proxy enabled: {colorize(args.proxy, '226')}")
+    print("")
 
     max_inflight = args.max_inflight if args.max_inflight > 0 else args.threads * 20
+    start_time = time.time()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         inflight: set[concurrent.futures.Future] = set()
 
         for (url, probe) in iter_tasks(urls, probes):
-            fut = executor.submit(process_one, url, probe, args, token, output_lock, reflect_counter)
+            fut = executor.submit(process_one, url, probe, args, token, output_lock, stats)
             inflight.add(fut)
 
             # Bound memory: if too many queued tasks, wait for some to finish.
@@ -388,7 +469,10 @@ def main() -> None:
         if inflight:
             concurrent.futures.wait(inflight)
 
-    print(f"\n▶ Number of Reflections Found: {colorize(str(reflect_counter.value()), '80')}\n")
+    stats.clear_line()
+    elapsed = time.time() - start_time
+    print(f"\n▶ Scan finished in {elapsed:.2f}s")
+    print(f"▶ Number of Reflections Found: {colorize(str(stats.final_stats()), '80')}\n")
 
 
 if __name__ == "__main__":

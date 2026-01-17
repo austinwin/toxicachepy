@@ -2,15 +2,17 @@
 local-config.json
 my-secret.env
 debug.log
+generate_urls.py
 
 # Ignore folders (and everything inside)
 temp/
 logs/
-
+tests/
 # Ignore by pattern (e.g., all .env files anywhere)
 *.env
 *.txt
 *.urls
+*.pyc
 
 # Ignore by extension
 *.tmp

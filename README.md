@@ -10,10 +10,17 @@ This tool does **not** confirm exploitability. It is designed to reduce noise du
 > Python implementation maintained informally
 
   
-**python toxicache.py -i urls.txt**  
+**python toxicache.py -i urls.txt --json**  
 <img width="490" height="169" alt="image" src="https://github.com/user-attachments/assets/89f8b177-05c6-41c4-87f3-b9531bfbea1a" />
 
 ---
+
+## Key Features
+*   **Smart Detection**: Checks for reflections in headers or body, but only if caching is detected.
+*   **JSON Output**: Use `--json` for easy integration with jq or other pipelines.
+*   **Proxy Support**: Tunnel requests through Burp/Zap using `--proxy`.
+*   **Resilience**: Auto-retries on 429/5xx errors.
+*   **Visual Feedback**: Colorful, structured console output with live progress stats.
 
 ## What This Tool Actually Does
 
@@ -61,28 +68,45 @@ python toxicache.py -i urls.txt -o results.txt -t 50
 
 ## Options
 
-| Flag | Long Flag     | Description                  | Default |
-|-----:|---------------|------------------------------|---------|
-| -i   | --input       | Input file containing URLs   | None |
-| -o   | --output      | Output file path             | toxicache-YYYY-MM-DD_HH-MM-SS.txt |
-| -t   | --threads     | Number of concurrent threads | CPU count × 5 |
-| -ua  | --user-agent  | Custom User-Agent string     | Chrome/111.0.0.0 |
+| Flag | Long Flag | Description | Default |
+|-----:|-----------|-------------|---------|
+| `-i` | `--input` | Input file containing URLs | None |
+| `-o` | `--output` | Output file path | `toxicache-TIMESTAMP.txt` |
+| `-t` | `--threads` | Number of concurrent threads | CPU count × 5 |
+| | `--timeout` | Request timeout in seconds | 10 |
+| | `--proxy` | Proxy URL (e.g., `http://127.0.0.1:8080`) | None |
+| | `--json` | Output results in JSONL format | False |
+| | `--payload` | Custom payload to inject | `xhzeem.me` |
+| | `--show-cache-headers` | Print detected cache headers | False |
+| | `--insecure` | Disable TLS verification | False |
+| | `--follow-redirects` | Follow HTTP redirects | False |
+| | `--max-inflight` | Max active requests (for memory safety) | Auto |
+| `-v` | `--verbose` | Enable verbose error logging | False |
 
 ---
 
 ## Example Output
 
-Console output:
+**Console Output:**
 
 ```text
-Headers reflected: X-Forwarded-Host: xhzeem.me
-https://example.com
+[+] Reflection found at https://example.com/
+    ├─ Payload: X-Forwarded-Host: xhzeem.me
+    ├─ Source:  Header(X-Reflected-Host)
+    ├─ Status:  200
+    └─ Cache:   HIT
 ```
 
-File output:
+**File Output (Default):**
 
 ```text
-Headers reflected: X-Forwarded-Host: xhzeem.me @ https://example.com
+Reflected: X-Forwarded-Host: xhzeem.me | Loc: Header(X-Reflected-Host) | Status: 200 @ https://example.com/
+```
+
+**File Output (JSON):**
+
+```json
+{"url": "https://example.com/", "payload_headers": {"X-Forwarded-Host": "xhzeem.me"}, "source": "Header(X-Reflected-Host)", "status": 200, "cache_headers": ["x-cache"], "timestamp": "2026-01-17_16-01-55"}
 ```
 
 Each entry represents a **header reflection that occurred in the presence of cache-related response headers**.

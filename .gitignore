@@ -1,0 +1,16 @@
+# Ignore specific files
+local-config.json
+my-secret.env
+debug.log
+
+# Ignore folders (and everything inside)
+temp/
+logs/
+
+# Ignore by pattern (e.g., all .env files anywhere)
+*.env
+*.txt
+*.urls
+
+# Ignore by extension
+*.tmp

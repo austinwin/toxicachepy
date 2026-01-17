@@ -67,4 +67,7 @@ Reporting: Successful reflections are printed to the console and saved to the ou
 Legal Disclaimer
 This tool is created for educational purposes and authorized security testing only. Do not use this tool on systems or domains you do not own or do not have explicit permission to test. The authors are not responsible for any misuse or damage caused by this tool.
 
+# Clone or download the script
+git clone https://github.com/austinwin/toxicachepy.git  # (or just download the .py file)
+cd toxicachepy
 

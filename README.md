@@ -11,7 +11,7 @@ This tool does **not** confirm exploitability. It is designed to reduce noise du
 
   
 **python toxicache.py -i urls.txt --json**  
-<img width="490" height="169" alt="image" src="https://github.com/user-attachments/assets/89f8b177-05c6-41c4-87f3-b9531bfbea1a" />
+<img width="559" height="196" alt="image" src="https://github.com/user-attachments/assets/77c7dd97-6230-4282-bda8-ae91000cc1bb" />
 
 ---
 

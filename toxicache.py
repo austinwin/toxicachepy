@@ -228,6 +228,60 @@ def check_reflection(
     return (False, cache_hits, modified_url, resp.status_code, "None")
 
 
+def validate_cache_poisoning(
+    url: str,
+    probe: Probe,
+    user_agent: str,
+    timeout: int,
+    insecure: bool,
+    follow_redirects: bool,
+    token: str,
+    proxies: Optional[Dict[str, str]] = None,
+) -> Tuple[bool, str, int]:
+    """
+    Two-step validation:
+    1. Send poisoned request (already done by check_reflection)
+    2. Re-request WITHOUT injection to see if poisoned content persists
+
+    Returns:
+      (validated, source_type, status_code)
+    """
+    # Step 2: Re-request without the malicious header injection
+    # Use same modified_url (with toxicache param) but WITHOUT the probe headers
+    modified_url = inject_toxic_param(url, token)
+    
+    # Clean headers - only User-Agent, no probe headers
+    headers = {"User-Agent": user_agent}
+    
+    try:
+        sess = get_session(insecure)
+        resp = sess.get(
+            modified_url,
+            headers=headers,
+            verify=not insecure,
+            allow_redirects=follow_redirects,
+            timeout=timeout,
+            proxies=proxies,
+        )
+    except requests.RequestException:
+        return (False, "Error", 0)
+    
+    # Check if poisoned content persists in clean request
+    # Check response headers for the probe.check value
+    for k, v in resp.headers.items():
+        if probe.check in str(v):
+            return (True, f"Header({k})", resp.status_code)
+    
+    # Check response body
+    try:
+        if probe.check in (resp.text or ""):
+            return (True, "Body", resp.status_code)
+    except Exception:
+        pass
+    
+    return (False, "None", resp.status_code)
+
+
 def process_one(
     url: str,
     probe: Probe,
@@ -254,6 +308,23 @@ def process_one(
     if not reflected:
         return
 
+    # Perform two-step validation if enabled
+    validated = False
+    validation_source = "N/A"
+    validation_status = 0
+    
+    if args.validate:
+        validated, validation_source, validation_status = validate_cache_poisoning(
+            url=url,
+            probe=probe,
+            user_agent=args.user_agent,
+            timeout=args.timeout,
+            insecure=args.insecure,
+            follow_redirects=args.follow_redirects,
+            token=token,
+            proxies=proxies,
+        )
+
     with output_lock:
         # Clear status line to print result nicely
         stats.clear_line()
@@ -270,7 +341,22 @@ def process_one(
             if args.show_cache_headers
             else f"Detected ({len(cache_hits)})"
         )
-        print(f"    └─ Cache:   {colorize(cache_str, '80')}")
+        
+        # Show validation result if two-step validation was enabled
+        if args.validate:
+            # Cache is not the last line
+            print(f"    ├─ Cache:   {colorize(cache_str, '80')}")
+            validation_marker = "✓ VALIDATED" if validated else "✗ Not Validated"
+            validation_color = "46" if validated else "196"
+            print(f"    └─ Validation: {colorize(validation_marker, validation_color)}", end="")
+            if validated:
+                print(f" (Persisted in {validation_source}, Status: {color_status(validation_status)})")
+            else:
+                print("")
+        else:
+            # Cache is the last line
+            print(f"    └─ Cache:   {colorize(cache_str, '80')}")
+        
         print("")  # Separator
 
         with open(args.output, "a", encoding="utf-8") as f:
@@ -283,9 +369,18 @@ def process_one(
                     "cache_headers": cache_hits,
                     "timestamp": now_timestamp()
                 }
+                if args.validate:
+                    entry["validated"] = validated
+                    entry["validation_source"] = validation_source
+                    entry["validation_status"] = validation_status
                 f.write(json.dumps(entry) + "\n")
             else:
                 base_log = f"Reflected: {hdrs} | Loc: {source} | Status: {status_code}"
+                if args.validate:
+                    validation_str = f"Validated: {'YES' if validated else 'NO'}"
+                    if validated:
+                        validation_str += f" (Persisted in {validation_source})"
+                    base_log += f" | {validation_str}"
                 if args.show_cache_headers:
                     f.write(f"{base_log} | Cache: {', '.join(cache_hits)} @ {url}\n")
                 else:
@@ -414,6 +509,8 @@ def main() -> None:
     parser.add_argument("--payload", type=str, default="xhzeem.me", help="Payload value used for probes")
     parser.add_argument("--proxy", type=str, default="", help="Proxy URL (e.g. http://127.0.0.1:8080)")
     parser.add_argument("--json", action="store_true", help="Output results in JSONL format")
+    parser.add_argument("--validate", action="store_true",
+                        help="Enable two-step validation: re-request without injection to verify cache poisoning")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose mode (controls error visibility, etc.)")
 
     args = parser.parse_args()
@@ -447,6 +544,8 @@ def main() -> None:
     print(f"▶ toxicache token: {colorize(token, '80')}")
     if args.proxy:
         print(f"▶ Proxy enabled: {colorize(args.proxy, '226')}")
+    if args.validate:
+        print(f"▶ Two-step validation: {colorize('ENABLED', '46')} (will re-request without injection)")
     print("")
 
     max_inflight = args.max_inflight if args.max_inflight > 0 else args.threads * 20

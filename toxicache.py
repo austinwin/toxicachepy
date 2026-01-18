@@ -313,7 +313,7 @@ def process_one(
     validation_source = "N/A"
     validation_status = 0
     
-    if hasattr(args, 'validate') and args.validate:
+    if args.validate:
         validated, validation_source, validation_status = validate_cache_poisoning(
             url=url,
             probe=probe,
@@ -343,7 +343,7 @@ def process_one(
         )
         
         # Show validation result if two-step validation was enabled
-        if hasattr(args, 'validate') and args.validate:
+        if args.validate:
             # Cache is not the last line
             print(f"    ├─ Cache:   {colorize(cache_str, '80')}")
             validation_marker = "✓ VALIDATED" if validated else "✗ Not Validated"
@@ -369,14 +369,14 @@ def process_one(
                     "cache_headers": cache_hits,
                     "timestamp": now_timestamp()
                 }
-                if hasattr(args, 'validate') and args.validate:
+                if args.validate:
                     entry["validated"] = validated
                     entry["validation_source"] = validation_source
                     entry["validation_status"] = validation_status
                 f.write(json.dumps(entry) + "\n")
             else:
                 base_log = f"Reflected: {hdrs} | Loc: {source} | Status: {status_code}"
-                if hasattr(args, 'validate') and args.validate:
+                if args.validate:
                     validation_str = f"Validated: {'YES' if validated else 'NO'}"
                     if validated:
                         validation_str += f" (Persisted in {validation_source})"

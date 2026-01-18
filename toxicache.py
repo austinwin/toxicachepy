@@ -239,10 +239,10 @@ def validate_cache_poisoning(
     proxies: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, str, int]:
     """
-    Two-step validation: 
+    Two-step validation:
     1. Send poisoned request (already done by check_reflection)
     2. Re-request WITHOUT injection to see if poisoned content persists
-    
+
     Returns:
       (validated, source_type, status_code)
     """
@@ -509,7 +509,7 @@ def main() -> None:
     parser.add_argument("--payload", type=str, default="xhzeem.me", help="Payload value used for probes")
     parser.add_argument("--proxy", type=str, default="", help="Proxy URL (e.g. http://127.0.0.1:8080)")
     parser.add_argument("--json", action="store_true", help="Output results in JSONL format")
-    parser.add_argument("--validate", action="store_true", 
+    parser.add_argument("--validate", action="store_true",
                         help="Enable two-step validation: re-request without injection to verify cache poisoning")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose mode (controls error visibility, etc.)")
 

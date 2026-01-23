@@ -1,6 +1,6 @@
 # toxicachepy
 
-**toxicachepy** is a Python-based, cache-aware **header reflection scanner** inspired by the original Golang tool [toxicache](https://github.com/xhzeem/toxicache). The tool for educational purpose only.  
+**toxicachepy** is a Python-based, cache-aware **header reflection scanner** inspired by the original Golang tool [toxicache](https://github.com/xhzeem/toxicache). The tool is for educational purpose only.  
 
 It identifies potential **web cache poisoning candidates** by injecting a fixed set of HTTP headers and reporting reflections **only when cache-related response headers are present**.
 
